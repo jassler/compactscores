@@ -273,6 +273,19 @@ def render_index(pieces: list[Piece], site_title: str) -> str:
     return page(site_title, body, "style.css")
 
 
+def render_404() -> str:
+    # GitHub Pages serves this for every missing path. All published paths are
+    # lowercase, so redirect e.g. /ROS (uppercase keeps QR codes small) to /ros.
+    # Links are root-relative because this page is served under arbitrary paths.
+    body = """<script>
+const lower = location.pathname.toLowerCase();
+if (lower !== location.pathname) location.replace(lower + location.search + location.hash);
+</script>
+<h1>Not found</h1>
+<p>This page doesn't exist. <a href="/">Browse all scores</a></p>"""
+    return page("Not found", body, "/style.css")
+
+
 CSS = """\
 :root {
   --bg: #fdfcf9; --fg: #1d1b18; --muted: #6b665e; --line: #e4e0d8; --accent: #7a2e1f;
@@ -335,6 +348,7 @@ def build(scores_dir: Path, out_dir: Path, site_title: str) -> None:
     out_dir.mkdir(parents=True)
     (out_dir / "style.css").write_text(CSS)
     (out_dir / "index.html").write_text(render_index(pieces, site_title))
+    (out_dir / "404.html").write_text(render_404())
     for piece in pieces:
         piece_dir = out_dir / piece.slug
         for arr in piece.arrangements:
