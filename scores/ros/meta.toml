@@ -1,0 +1,11 @@
+title = "Es ist ein Ros entsprungen"
+# composer = ""
+# arranger = ""
+
+[[arrangement]]
+# name = "SATB"    # shown as a heading; useful once there are several arrangements
+
+  [[arrangement.version]]
+  date = 2026-11-23
+  pdf = "Es ist ein Ros entsprungen.pdf"
+  dorico = "Es ist ein Ros entsprungen.dorico"

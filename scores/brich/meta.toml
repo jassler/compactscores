@@ -1,0 +1,11 @@
+title = "Brich an, o schönes Morgenlicht"
+# composer = ""
+# arranger = ""
+
+[[arrangement]]
+# name = "SATB"    # shown as a heading; useful once there are several arrangements
+
+  [[arrangement.version]]
+  date = 2026-11-23
+  pdf = "Brich an o schönes Morgenlicht.pdf"
+  dorico = "Brich an o schönes Morgenlicht.dorico"
