@@ -15,11 +15,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -31,5 +28,15 @@ jobs:
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
+
+  # Separate job: deploying right after the upload in the same job can miss
+  # the artifact (https://github.com/actions/deploy-pages/issues/451)
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v5
