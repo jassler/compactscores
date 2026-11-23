@@ -1,6 +1,7 @@
 title = "Es ist ein Ros entsprungen"
 # composer = ""
 # arranger = ""
+# qr = false        # this PDF already has the QR code from the template; remove after re-exporting without it
 
 [[arrangement]]
 # name = "SATB"    # shown as a heading; useful once there are several arrangements

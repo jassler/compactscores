@@ -1,0 +1,12 @@
+title = "Macht hoch die Tür"
+composer = "Max Reger"
+# arranger = ""
+
+[[arrangement]]
+# name = ""
+
+  [[arrangement.version]]
+  date = 2026-11-23
+  pdf = "Macht hoch die Tür.pdf"
+  dorico = "Macht hoch die Tür.dorico"
+  # notes = ""

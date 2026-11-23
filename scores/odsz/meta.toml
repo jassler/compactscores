@@ -1,0 +1,12 @@
+title = "O du stille Zeit"
+composer = "Cesar Bresgen"
+arranger = "Simon Wawer"
+
+[[arrangement]]
+# name = ""
+
+  [[arrangement.version]]
+  date = 2026-11-23
+  pdf = "O du stille Zeit.pdf"
+  dorico = "O du stille Zeit.dorico"
+  # notes = ""

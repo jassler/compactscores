@@ -1,0 +1,12 @@
+title = "Unser lieben Frauen Traum"
+composer = "Max Reger"
+# arranger = ""
+
+[[arrangement]]
+# name = ""
+
+  [[arrangement.version]]
+  date = 2026-11-23
+  pdf = "Unser lieben Frauen Traum.pdf"
+  dorico = "Unser lieben Frauen Traum.dorico"
+  # notes = ""

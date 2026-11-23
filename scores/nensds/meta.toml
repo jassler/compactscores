@@ -1,0 +1,12 @@
+title = "Nun es nahen sich die Stunden"
+# composer = ""
+arranger = "Koletta Fritz"
+
+[[arrangement]]
+# name = ""
+
+  [[arrangement.version]]
+  date = 2026-11-23
+  pdf = "Nun es nahen sich die Stunden.pdf"
+  dorico = "Nun es nahen sich die Stunden.dorico"
+  # notes = ""

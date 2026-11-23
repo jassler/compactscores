@@ -1,0 +1,12 @@
+title = "Stille Nacht"
+# composer = ""
+arranger = "Bernd Engelbrecht"
+
+[[arrangement]]
+# name = ""
+
+  [[arrangement.version]]
+  date = 2026-11-23
+  pdf = "Stille Nacht.pdf"
+  dorico = "Stille Nacht.dorico"
+  # notes = ""

@@ -1,0 +1,12 @@
+title = "Kyrie (Palestrina)"
+composer = "Giovanni Pierluigi da Palestrina"
+# arranger = ""
+
+[[arrangement]]
+# name = ""
+
+  [[arrangement.version]]
+  date = 2026-11-23
+  pdf = "Kyrie Palestrina.pdf"
+  dorico = "Kyrie Palestrina.dorico"
+  # notes = ""

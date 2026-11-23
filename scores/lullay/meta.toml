@@ -1,0 +1,12 @@
+title = "Lullay"
+composer = "Karl Jenkins"
+# arranger = ""
+
+[[arrangement]]
+# name = ""
+
+  [[arrangement.version]]
+  date = 2026-11-23
+  pdf = "Lullay.pdf"
+  dorico = "Lullay.dorico"
+  # notes = ""

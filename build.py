@@ -10,6 +10,7 @@ import html
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 import unicodedata
 from dataclasses import dataclass, field
@@ -18,6 +19,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent
 FILE_TYPES = {"pdf": "PDF", "dorico": "Dorico"}
+# QR codes link to QR_BASE_URL + slug. Uppercase lets the QR use its compact
+# alphanumeric mode; 404.html redirects uppercase paths to the lowercase pages.
+QR_BASE_URL = "HTTPS://ZUA.AT/"
+# Matches the score template: top-left corner on page 1, 14 mm wide
+QR_DEFAULTS = {"page": 1, "x": 14.8, "y": 14.8, "size": 14.0}  # mm from the top-left page corner
+MM = 72 / 25.4
 TRANSLITERATIONS = str.maketrans({
     "ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
     "Ä": "Ae", "Ö": "Oe", "Ü": "Ue",
@@ -33,7 +40,9 @@ class Version:
     date: date
     notes: str
     files: dict[str, Path]  # file type -> source path
+    qr: dict | None  # QR placement for the PDF, None to leave the PDF untouched
     outputs: dict[str, str] = field(default_factory=dict)  # file type -> path relative to piece dir
+    sizes: dict[str, int] = field(default_factory=dict)  # file type -> published size in bytes
     thumbnail: str = ""  # path relative to piece dir, only for current versions with a PDF
 
 
@@ -69,6 +78,29 @@ def slugify(text: str) -> str:
     return "-".join(part for part in slug.split("-") if part)
 
 
+def resolve_qr(levels: list, fail) -> dict | None:
+    """Merge `qr` settings from piece, arrangement and version; the most specific wins.
+
+    Each level may be true/false or a table with page, x, y and size (mm).
+    """
+    qr = dict(QR_DEFAULTS)
+    enabled = True
+    for level in levels:
+        if level is None:
+            continue
+        if isinstance(level, bool):
+            enabled = level
+        elif isinstance(level, dict):
+            unknown = level.keys() - QR_DEFAULTS.keys()
+            if unknown:
+                fail(f"unknown qr setting(s): {', '.join(sorted(unknown))} (allowed: {', '.join(QR_DEFAULTS)})")
+            enabled = True
+            qr.update(level)
+        else:
+            fail("'qr' must be true, false or a table like { x = 15, y = 15 }")
+    return qr if enabled else None
+
+
 def load_piece(folder: Path) -> Piece:
     meta_path = folder / "meta.toml"
     with meta_path.open("rb") as f:
@@ -101,7 +133,8 @@ def load_piece(folder: Path) -> Piece:
                     files[ftype] = src
             if not files:
                 fail(f"version {raw_version['date']} lists no files (use keys: {', '.join(FILE_TYPES)})")
-            versions.append(Version(raw_version["date"], raw_version.get("notes", ""), files))
+            qr = resolve_qr([meta.get("qr"), raw.get("qr"), raw_version.get("qr")], fail)
+            versions.append(Version(raw_version["date"], raw_version.get("notes", ""), files, qr))
         if not versions:
             fail(f"arrangement '{arr_id or i + 1}' has no [[arrangement.version]]")
         versions.sort(key=lambda v: v.date, reverse=True)
@@ -173,8 +206,97 @@ def page(title: str, body: str, css_href: str) -> str:
 """
 
 
-def format_size(path: Path) -> str:
-    size = path.stat().st_size
+# --- PDF processing ---
+
+def qr_matrix(text: str) -> list[list[bool]]:
+    out = subprocess.run(["qrencode", "-t", "ASCII", "-m", "0", "-o", "-", text],
+                         check=True, capture_output=True, text=True).stdout
+    # Each module is printed as two characters, "##" for dark
+    return [[line[i] == "#" for i in range(0, len(line), 2)] for line in out.splitlines() if line]
+
+
+def page_box(pdf: Path, page_no: int) -> tuple[float, float, float, float]:
+    out = subprocess.run(["pdfinfo", "-box", "-f", str(page_no), "-l", str(page_no), str(pdf)],
+                         check=True, capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        parts = line.split()  # "Page    1 TrimBox:      0.00     0.00   595.00   842.00"
+        if parts[:3] == ["Page", str(page_no), "TrimBox:"]:
+            x0, y0, x1, y1 = map(float, parts[3:7])
+            return x0, y0, x1, y1
+    raise BuildError(f"{pdf.name} has no page {page_no}")
+
+
+def qr_overlay_pdf(box: tuple[float, float, float, float], qr: dict, url: str, label: str) -> bytes:
+    """A one-page PDF with the same page box, containing only the QR code and its label.
+
+    Mirrors the template: QR without quiet zone, the label in Courier to its right,
+    rotated to read top to bottom.
+    """
+    x0, y0, x1, y1 = box
+    matrix = qr_matrix(url)
+    module = qr["size"] * MM / len(matrix)
+    left = x0 + qr["x"] * MM
+    top = y1 - qr["y"] * MM
+    ops = []
+    for r, row in enumerate(matrix):
+        c = 0
+        while c < len(row):  # one rectangle per horizontal run of dark modules
+            if not row[c]:
+                c += 1
+                continue
+            start = c
+            while c < len(row) and row[c]:
+                c += 1
+            ops.append(f"{left + start * module:.3f} {top - (r + 1) * module:.3f} {(c - start) * module:.3f} {module:.3f} re")
+    font_size = qr["size"] * MM * 30 / 168  # same ratio as the 30pt label next to the 168px QR
+    label_x = left + len(matrix) * module + 0.25 * font_size
+    label_y = top - 0.2 * font_size
+    content = (
+        "q 0 g\n" + "\n".join(ops) + "\nf Q\n"
+        f"BT /F1 {font_size:.3f} Tf 0 -1 1 0 {label_x:.3f} {label_y:.3f} Tm ({label}) Tj ET\n"
+    ).encode()
+
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        f"<< /Type /Page /Parent 2 0 R /MediaBox [{x0} {y0} {x1} {y1}] "
+        f"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>".encode(),
+        b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>",
+    ]
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for i, obj in enumerate(objects, 1):
+        offsets.append(len(pdf))
+        pdf += b"%d 0 obj\n" % i + obj + b"\nendobj\n"
+    xref = len(pdf)
+    pdf += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    pdf += b"".join(b"%010d 00000 n \n" % off for off in offsets)
+    pdf += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref)
+    return bytes(pdf)
+
+
+def stamp_qr(src: Path, dest: Path, qr: dict, slug: str) -> None:
+    page_no = qr["page"]
+    overlay = qr_overlay_pdf(page_box(src, page_no), qr, QR_BASE_URL + slug.upper(), "/" + slug)
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as f:
+        f.write(overlay)
+        f.flush()
+        subprocess.run(["qpdf", str(src), "--overlay", f.name, f"--to={page_no}", "--from=1", "--", str(dest)],
+                       check=True, capture_output=True)
+
+
+def publish_pdf(src: Path, dest: Path, qr: dict | None, slug: str) -> None:
+    if qr:
+        try:
+            stamp_qr(src, dest, qr, slug)
+            return
+        except (OSError, subprocess.CalledProcessError) as err:
+            print(f"warning: no QR code added to {src.relative_to(ROOT)}: {err}", file=sys.stderr)
+    shutil.copy2(src, dest)
+
+
+def format_size(size: int) -> str:
     return f"{size / 1024:.0f} KB" if size < 1024 * 1024 else f"{size / 1024 / 1024:.1f} MB"
 
 
@@ -188,7 +310,7 @@ def render_thumbnail(pdf: Path, dest: Path) -> bool:
         )
         return True
     except (OSError, subprocess.CalledProcessError) as err:
-        print(f"warning: no thumbnail for {pdf.relative_to(ROOT)}: {err}", file=sys.stderr)
+        print(f"warning: no thumbnail for {pdf.name}: {err}", file=sys.stderr)
         return False
 
 
@@ -205,7 +327,7 @@ def download_links(version: Version) -> str:
         filename = out.rsplit("/", 1)[-1]
         links.append(
             f'<a class="dl dl-{ftype}" href="{e(out)}" download="{e(filename)}">'
-            f'{FILE_TYPES[ftype]} <small>{format_size(version.files[ftype])}</small></a>'
+            f'{FILE_TYPES[ftype]} <small>{format_size(version.sizes[ftype])}</small></a>'
         )
     return " ".join(links)
 
@@ -356,8 +478,12 @@ def build(scores_dir: Path, out_dir: Path, site_title: str) -> None:
                 for ftype, out in version.outputs.items():
                     dest = piece_dir / out
                     dest.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(version.files[ftype], dest)
-                if version.thumbnail and not render_thumbnail(version.files["pdf"], piece_dir / version.thumbnail):
+                    if ftype == "pdf":
+                        publish_pdf(version.files[ftype], dest, version.qr, piece.slug)
+                    else:
+                        shutil.copy2(version.files[ftype], dest)
+                    version.sizes[ftype] = dest.stat().st_size
+                if version.thumbnail and not render_thumbnail(piece_dir / version.outputs["pdf"], piece_dir / version.thumbnail):
                     version.thumbnail = ""
         (piece_dir / "index.html").write_text(render_piece(piece))
     print(f"Built {len(pieces)} piece(s) into {out_dir}")

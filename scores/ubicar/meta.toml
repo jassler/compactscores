@@ -1,0 +1,12 @@
+title = "Ubi Caritas"
+composer = "Ola Gjeilo"
+# arranger = ""
+
+[[arrangement]]
+# name = ""
+
+  [[arrangement.version]]
+  date = 2026-11-23
+  pdf = "Ubi Caritas.pdf"
+  dorico = "Ubi Caritas.dorico"
+  # notes = ""

@@ -1,0 +1,13 @@
+title = "Maria durch ein Dornwald ging"
+# composer = ""
+arranger = "Udo Baake"
+# qr = { x = 20, y = 274 }        # this PDF already has the QR code from the template; remove after re-exporting without it
+
+[[arrangement]]
+name = "SATB+Cello"    # shown as a heading; useful once there are several arrangements
+
+  [[arrangement.version]]
+  date = 2026-11-23
+  pdf = "Maria durch ein Dornwald ging.pdf"
+  dorico = "Maria durch ein Dornwald ging.dorico"
+  notes = "Two arrangements in one file, plz check if correct"

@@ -1,0 +1,12 @@
+title = "Reich und Arm"
+# composer = ""
+arranger = "Verena Gillard"
+
+[[arrangement]]
+# name = ""
+
+  [[arrangement.version]]
+  date = 2026-11-23
+  pdf = "Reich und Arm.pdf"
+  dorico = "Reich und Arm.dorico"
+  # notes = ""
