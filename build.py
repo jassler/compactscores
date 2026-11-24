@@ -25,6 +25,8 @@ QR_BASE_URL = "HTTPS://ZUA.AT/"
 # Matches the score template: top-left corner on page 1, 14 mm wide
 QR_DEFAULTS = {"page": 1, "x": 14.8, "y": 14.8, "size": 14.0}  # mm from the top-left page corner
 MM = 72 / 25.4
+# Piece pages render the full PDF in the browser with PDF.js (falls back to the thumbnail)
+PDFJS_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.5.438/build/"
 TRANSLITERATIONS = str.maketrans({
     "ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
     "Ä": "Ae", "Ö": "Oe", "Ü": "Ue",
@@ -188,7 +190,7 @@ def e(text) -> str:
     return html.escape(str(text))
 
 
-def page(title: str, body: str, css_href: str) -> str:
+def page(title: str, body: str, css_href: str, head: str = "") -> str:
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -196,7 +198,7 @@ def page(title: str, body: str, css_href: str) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{e(title)}</title>
 <link rel="stylesheet" href="{css_href}">
-</head>
+{head}</head>
 <body>
 <main>
 {body}
@@ -314,11 +316,13 @@ def render_thumbnail(pdf: Path, dest: Path) -> bool:
         return False
 
 
-def thumbnail_img(version: Version, alt: str) -> str:
+def pdf_viewer(version: Version, alt: str) -> str:
+    """All pages of the PDF, drawn by viewer.js; until then (or without JS) the first-page thumbnail."""
     if not version.thumbnail:
         return ""
-    return (f'<a class="thumb" href="{e(version.outputs["pdf"])}">'
-            f'<img src="{e(version.thumbnail)}" alt="{e(alt)}" width="240" loading="lazy"></a>')
+    return (f'<div class="viewer" data-pdf="{e(version.outputs["pdf"])}" aria-label="{e(alt)}">'
+            f'<a class="sheet" href="{e(version.outputs["pdf"])}">'
+            f'<img src="{e(version.thumbnail)}" alt="First page of {e(alt)}" width="480"></a></div>')
 
 
 def download_links(version: Version) -> str:
@@ -356,18 +360,14 @@ def render_piece(piece: Piece) -> str:
                 for v in older
             )
             history = f'<details><summary>Older versions ({len(older)})</summary><ul class="history">\n{rows}\n</ul></details>'
-        thumb = thumbnail_img(current, f"First page of {piece.title}" + (f" ({arr.name})" if arr.name else ""))
+        viewer = pdf_viewer(current, piece.title + (f" ({arr.name})" if arr.name else ""))
         sections.append(f"""<section>
 {heading}
-<div class="current">
-{thumb}
-<div>
 <p class="meta">Current version · <time datetime="{current.date}">{current.date}</time></p>
 <p class="downloads">{download_links(current)}</p>
 {notes}
-</div>
-</div>
 {history}
+{viewer}
 </section>""")
 
     piece_notes = f'<p class="notes">{e(piece.notes)}</p>' if piece.notes else ""
@@ -376,7 +376,8 @@ def render_piece(piece: Piece) -> str:
 {credits(piece)}
 {piece_notes}
 {chr(10).join(sections)}"""
-    return page(piece.title, body, "../style.css")
+    head = f'<script type="module" src="../viewer.js" data-pdfjs="{e(PDFJS_URL)}"></script>\n'
+    return page(piece.title, body, "../style.css", head)
 
 
 def render_index(pieces: list[Piece], site_title: str) -> str:
@@ -439,10 +440,9 @@ summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
 .history li { padding: .5rem 0; border-bottom: 1px solid var(--line); }
 .history time { margin-right: .5rem; font-size: .9rem; }
 .history .dl { padding: .2rem .6rem; font-size: .85rem; }
-.current { display: flex; flex-wrap: wrap; gap: 1.25rem; align-items: flex-start; }
-.thumb img, .pieces img { display: block; width: 100%; height: auto; background: #fff;
+.viewer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; margin-top: 1.25rem; }
+.viewer img, .viewer canvas, .pieces img { display: block; width: 100%; height: auto; background: #fff;
       border: 1px solid var(--line); border-radius: 3px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
-.thumb { flex: 0 0 10rem; max-width: 100%; }
 .pieces { list-style: none; padding: 0; margin: 1.5rem 0 0; display: grid;
           grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: 2rem 1.5rem; }
 .pieces li { display: flex; flex-direction: column; gap: .15rem; }
@@ -450,6 +450,54 @@ summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
 .pieces .noimg { display: block; aspect-ratio: 1 / 1.414; border: 1px dashed var(--line); border-radius: 3px; }
 .pieces .title { font-size: 1.05rem; line-height: 1.3; }
 .pieces .credits, .pieces time { font-size: .85rem; }
+"""
+
+VIEWER_JS = """\
+// Replaces each .viewer's thumbnail with every page of its PDF, drawn by PDF.js.
+// On any failure the thumbnail (a link to the PDF) simply stays.
+const base = document.querySelector("script[data-pdfjs]").dataset.pdfjs;
+const viewers = [...document.querySelectorAll(".viewer[data-pdf]")];
+
+if (viewers.length) {
+  const pdfjs = await import(base + "pdf.min.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc = base + "pdf.worker.min.mjs";
+
+  const draw = async (viewer, doc) => {
+    const width = viewer.clientWidth;
+    const scale = window.devicePixelRatio || 1;
+    const canvases = [];
+    for (let n = 1; n <= doc.numPages; n++) {
+      const page = await doc.getPage(n);
+      const vp = page.getViewport({ scale: width / page.getViewport({ scale: 1 }).width * scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(vp.width);
+      canvas.height = Math.round(vp.height);
+      canvas.setAttribute("role", "img");
+      canvas.setAttribute("aria-label", `Page ${n} of ${doc.numPages}`);
+      await page.render({ canvas, viewport: vp }).promise;
+      canvases.push(canvas);
+    }
+    viewer.replaceChildren(...canvases);
+    return width;
+  };
+
+  for (const viewer of viewers) {
+    try {
+      const doc = await pdfjs.getDocument({ url: new URL(viewer.dataset.pdf, location.href).href }).promise;
+      let drawnWidth = await draw(viewer, doc);
+      // Redraw when the viewer gets wider (e.g. phone rotated), so pages stay sharp
+      let timer;
+      new ResizeObserver(() => {
+        clearTimeout(timer);
+        timer = setTimeout(async () => {
+          if (viewer.clientWidth > drawnWidth * 1.1) drawnWidth = await draw(viewer, doc);
+        }, 300);
+      }).observe(viewer);
+    } catch (err) {
+      console.warn("Could not render", viewer.dataset.pdf, err);
+    }
+  }
+}
 """
 
 
@@ -469,6 +517,7 @@ def build(scores_dir: Path, out_dir: Path, site_title: str) -> None:
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
     (out_dir / "style.css").write_text(CSS)
+    (out_dir / "viewer.js").write_text(VIEWER_JS)
     (out_dir / "index.html").write_text(render_index(pieces, site_title))
     (out_dir / "404.html").write_text(render_404())
     for piece in pieces:
