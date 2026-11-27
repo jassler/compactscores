@@ -33,6 +33,32 @@ name = "SSAATB"
   pdf = "Ros SSAATB.pdf"
 ```
 
+## Recordings
+
+Link recordings (YouTube, Spotify, …) of the whole piece or of one arrangement, one
+`[[recording]]` block per link. They show as links on the piece page, labelled with the
+title, or else the site's name, with the optional notes below:
+
+```toml
+[[recording]]                 # for the piece; may go anywhere in meta.toml
+url = "https://youtu.be/…"
+title = "Kammerchor, Advent 2025"   # optional
+notes = "Live in St. Stephan; verse 2 sung by the sopranos only"   # optional
+
+[[recording]]                 # another one
+url = "https://youtu.be/…"
+title = "Rehearsal recording"
+
+[[arrangement]]
+name = "SATB"
+
+  [[arrangement.version]]
+  # …
+
+  [[arrangement.recording]]   # for this arrangement: place it after its [[arrangement]]
+  url = "https://open.spotify.com/track/…"
+```
+
 ## QR codes
 
 The build stamps a QR code linking to `HTTPS://ZUA.AT/<SLUG>` onto every published PDF,

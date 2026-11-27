@@ -110,10 +110,10 @@ def find_blocks(lines: list[str]) -> tuple[dict[tuple[int, int], tuple[int, int]
     current, start = None, 0
     for n, line in enumerate(lines + ["[[arrangement]]"]):  # sentinel closes the last block
         header = line.split("#", 1)[0].strip()
+        if header.startswith("[") and current:  # any table header ends a version block
+            blocks[current] = (start, n)
+            current = None
         if header in ("[[arrangement]]", "[[arrangement.version]]"):
-            if current:
-                blocks[current] = (start, n)
-                current = None
             if header == "[[arrangement]]":
                 arrangement_starts.append(n)
             else:

@@ -13,6 +13,7 @@ import sys
 import tempfile
 import tomllib
 import unicodedata
+import urllib.parse
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -37,6 +38,11 @@ class BuildError(Exception):
     pass
 
 
+def show(path: Path) -> Path:
+    """Path for messages: relative to the repo when inside it."""
+    return path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
+
+
 @dataclass
 class Version:
     date: date
@@ -49,10 +55,18 @@ class Version:
 
 
 @dataclass
+class Recording:
+    url: str
+    title: str
+    notes: str
+
+
+@dataclass
 class Arrangement:
     id: str
     name: str
     versions: list[Version]  # newest first
+    recordings: list[Recording] = field(default_factory=list)
 
 
 @dataclass
@@ -63,6 +77,7 @@ class Piece:
     arranger: str
     notes: str
     arrangements: list[Arrangement]
+    recordings: list[Recording] = field(default_factory=list)
 
     @property
     def thumbnail(self) -> str:
@@ -103,13 +118,29 @@ def resolve_qr(levels: list, fail) -> dict | None:
     return qr if enabled else None
 
 
+def load_recordings(raw, fail) -> list[Recording]:
+    """[[recording]] tables with a url and an optional title and notes."""
+    if not isinstance(raw, list) or not all(isinstance(r, dict) for r in raw):
+        fail("recordings must be [[recording]] tables with a 'url'")
+    recordings = []
+    for r in raw:
+        unknown = r.keys() - {"url", "title", "notes"}
+        if unknown:
+            fail(f"unknown recording setting(s): {', '.join(sorted(unknown))} (allowed: url, title, notes)")
+        url = r.get("url", "")
+        if not isinstance(url, str) or urllib.parse.urlsplit(url).scheme not in ("http", "https"):
+            fail(f"recording needs a 'url' starting with https:// (got {url!r})")
+        recordings.append(Recording(url, str(r.get("title", "")), str(r.get("notes", ""))))
+    return recordings
+
+
 def load_piece(folder: Path) -> Piece:
     meta_path = folder / "meta.toml"
     with meta_path.open("rb") as f:
         meta = tomllib.load(f)
 
     def fail(msg: str):
-        raise BuildError(f"{meta_path.relative_to(ROOT)}: {msg}")
+        raise BuildError(f"{show(meta_path)}: {msg}")
 
     if "title" not in meta:
         fail("missing 'title'")
@@ -140,7 +171,8 @@ def load_piece(folder: Path) -> Piece:
         if not versions:
             fail(f"arrangement '{arr_id or i + 1}' has no [[arrangement.version]]")
         versions.sort(key=lambda v: v.date, reverse=True)
-        arrangements.append(Arrangement(arr_id, raw.get("name", ""), versions))
+        arrangements.append(Arrangement(arr_id, raw.get("name", ""), versions,
+                                        load_recordings(raw.get("recording", []), fail)))
 
     piece = Piece(
         slug=folder.name,
@@ -149,6 +181,7 @@ def load_piece(folder: Path) -> Piece:
         arranger=meta.get("arranger", ""),
         notes=meta.get("notes", ""),
         arrangements=arrangements,
+        recordings=load_recordings(meta.get("recording", []), fail),
     )
     assign_output_names(piece, fail)
     warn_unreferenced(piece, folder)
@@ -181,7 +214,7 @@ def warn_unreferenced(piece: Piece, folder: Path) -> None:
     referenced = {key(src) for a in piece.arrangements for v in a.versions for src in v.files.values()}
     for path in folder.rglob("*"):
         if path.is_file() and path.suffix.lower().lstrip(".") in FILE_TYPES and key(path) not in referenced:
-            print(f"warning: {path.relative_to(ROOT)} is not listed in meta.toml", file=sys.stderr)
+            print(f"warning: {show(path)} is not listed in meta.toml", file=sys.stderr)
 
 
 # --- HTML ---
@@ -294,7 +327,7 @@ def publish_pdf(src: Path, dest: Path, qr: dict | None, slug: str) -> None:
             stamp_qr(src, dest, qr, slug)
             return
         except (OSError, subprocess.CalledProcessError) as err:
-            print(f"warning: no QR code added to {src.relative_to(ROOT)}: {err}", file=sys.stderr)
+            print(f"warning: no QR code added to {show(src)}: {err}", file=sys.stderr)
     shutil.copy2(src, dest)
 
 
@@ -316,13 +349,18 @@ def render_thumbnail(pdf: Path, dest: Path) -> bool:
         return False
 
 
-def pdf_viewer(version: Version, alt: str) -> str:
-    """All pages of the PDF, drawn by viewer.js; until then (or without JS) the first-page thumbnail."""
+def pdf_viewer(version: Version, alt: str, collapsed: bool) -> str:
+    """All pages of the PDF, drawn by viewer.js; until then (or without JS) the first-page thumbnail.
+
+    Collapsed viewers sit in a closed <details> and only load once opened.
+    """
     if not version.thumbnail:
         return ""
-    return (f'<div class="viewer" data-pdf="{e(version.outputs["pdf"])}" aria-label="{e(alt)}">'
-            f'<a class="sheet" href="{e(version.outputs["pdf"])}">'
-            f'<img src="{e(version.thumbnail)}" alt="First page of {e(alt)}" width="480"></a></div>')
+    viewer = (f'<div class="viewer" data-pdf="{e(version.outputs["pdf"])}" aria-label="{e(alt)}">'
+              f'<a class="sheet" href="{e(version.outputs["pdf"])}">'
+              f'<img src="{e(version.thumbnail)}" alt="First page of {e(alt)}" width="480"'
+              + (' loading="lazy"' if collapsed else "") + '></a></div>')
+    return f'<details class="score"><summary>Show score</summary>{viewer}</details>' if collapsed else viewer
 
 
 def download_links(version: Version) -> str:
@@ -334,6 +372,20 @@ def download_links(version: Version) -> str:
             f'{FILE_TYPES[ftype]} <small>{format_size(version.sizes[ftype])}</small></a>'
         )
     return " ".join(links)
+
+
+def recording_links(recordings: list[Recording]) -> str:
+    """Links to recordings, labelled with their title or else the site's name (youtube.com)."""
+    if not recordings:
+        return ""
+    items = []
+    for r in recordings:
+        host = urllib.parse.urlsplit(r.url).hostname or r.url
+        host = host.removeprefix("www.").removeprefix("m.")
+        label = f'<span>{e(r.title)}</span><small>{e(host)}</small>' if r.title else f'<span>{e(host)}</span>'
+        notes = f'<span class="notes">{e(r.notes)}</span>' if r.notes else ""
+        items.append(f'<li><a href="{e(r.url)}" rel="noopener">{label}</a>{notes}</li>')
+    return f'<div class="recordings"><h3>Recordings</h3><ul>{"".join(items)}</ul></div>'
 
 
 def credits(piece: Piece) -> str:
@@ -360,14 +412,19 @@ def render_piece(piece: Piece) -> str:
                 for v in older
             )
             history = f'<details><summary>Older versions ({len(older)})</summary><ul class="history">\n{rows}\n</ul></details>'
-        viewer = pdf_viewer(current, piece.title + (f" ({arr.name})" if arr.name else ""))
+        # With several arrangements, the scores are collapsed so all arrangements fit on screen
+        collapsed = len(piece.arrangements) > 1
+        viewer = pdf_viewer(current, piece.title + (f" ({arr.name})" if arr.name else ""), collapsed)
+        above, below = (viewer, "") if collapsed else ("", viewer)
         sections.append(f"""<section>
 {heading}
 <p class="meta">Current version · <time datetime="{current.date}">{current.date}</time></p>
 <p class="downloads">{download_links(current)}</p>
 {notes}
+{recording_links(arr.recordings)}
+{above}
 {history}
-{viewer}
+{below}
 </section>""")
 
     piece_notes = f'<p class="notes">{e(piece.notes)}</p>' if piece.notes else ""
@@ -375,6 +432,7 @@ def render_piece(piece: Piece) -> str:
 <h1>{e(piece.title)}</h1>
 {credits(piece)}
 {piece_notes}
+{recording_links(piece.recordings)}
 {chr(10).join(sections)}"""
     head = f'<script type="module" src="../viewer.js" data-pdfjs="{e(PDFJS_URL)}"></script>\n'
     return page(piece.title, body, "../style.css", head)
@@ -434,8 +492,19 @@ section { border-top: 1px solid var(--line); padding: 1.25rem 0; margin-top: 1.2
       text-decoration: none; font-family: system-ui, sans-serif; font-size: .95rem; }
 .dl-pdf { background: var(--accent); color: var(--bg); }
 .dl-pdf small { color: inherit; opacity: .8; }
+.recordings { margin-top: 1rem; }
+.recordings h3 { font-size: .9rem; font-weight: normal; color: var(--muted); margin: 0 0 .25rem; }
+.recordings ul { list-style: none; padding: 0; margin: 0; }
+.recordings li { padding: .15rem 0 .15rem 1.1rem; text-indent: -1.1rem; }
+.recordings li .notes { text-indent: 0; margin: 0; font-size: .9rem; }
+.recordings a { text-decoration: none; }
+.recordings a span { text-decoration: underline; }
+.recordings li::before { content: "▶"; display: inline-block; width: 1.1rem; text-indent: 0;
+      font-size: .7em; color: var(--muted); vertical-align: .15em; }
+.recordings small { margin-left: .35rem; font-family: system-ui, sans-serif; font-size: .8rem; }
 details { margin-top: 1rem; }
 summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+details.score > summary { color: var(--accent); font-size: 1rem; }
 .history { list-style: none; padding: 0; margin: .75rem 0 0; }
 .history li { padding: .5rem 0; border-bottom: 1px solid var(--line); }
 .history time { margin-right: .5rem; font-size: .9rem; }
@@ -454,14 +523,18 @@ summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
 
 VIEWER_JS = """\
 // Replaces each .viewer's thumbnail with every page of its PDF, drawn by PDF.js.
+// Viewers inside a closed <details> wait until it is opened.
 // On any failure the thumbnail (a link to the PDF) simply stays.
 const base = document.querySelector("script[data-pdfjs]").dataset.pdfjs;
 const viewers = [...document.querySelectorAll(".viewer[data-pdf]")];
 
-if (viewers.length) {
-  const pdfjs = await import(base + "pdf.min.mjs");
+let pdfjsLoaded;
+const loadPdfjs = () => pdfjsLoaded ??= import(base + "pdf.min.mjs").then(pdfjs => {
   pdfjs.GlobalWorkerOptions.workerSrc = base + "pdf.worker.min.mjs";
+  return pdfjs;
+});
 
+{
   const draw = async (viewer, doc) => {
     const width = viewer.clientWidth;
     const scale = window.devicePixelRatio || 1;
@@ -481,8 +554,9 @@ if (viewers.length) {
     return width;
   };
 
-  for (const viewer of viewers) {
+  const show = async viewer => {
     try {
+      const pdfjs = await loadPdfjs();
       const doc = await pdfjs.getDocument({ url: new URL(viewer.dataset.pdf, location.href).href }).promise;
       let drawnWidth = await draw(viewer, doc);
       // Redraw when the viewer gets wider (e.g. phone rotated), so pages stay sharp
@@ -496,6 +570,12 @@ if (viewers.length) {
     } catch (err) {
       console.warn("Could not render", viewer.dataset.pdf, err);
     }
+  };
+
+  for (const viewer of viewers) {
+    const details = viewer.closest("details");
+    if (details && !details.open) details.addEventListener("toggle", () => show(viewer), { once: true });
+    else await show(viewer);
   }
 }
 """
@@ -506,10 +586,10 @@ def build(scores_dir: Path, out_dir: Path, site_title: str) -> None:
     pieces = []
     for folder in folders:
         if not (folder / "meta.toml").is_file():
-            print(f"warning: skipping {folder.relative_to(ROOT)} (no meta.toml)", file=sys.stderr)
+            print(f"warning: skipping {show(folder)} (no meta.toml)", file=sys.stderr)
             continue
         if folder.name != folder.name.lower() or slugify(folder.name) != folder.name:
-            raise BuildError(f"{folder.relative_to(ROOT)}: folder name must be lowercase a-z, 0-9 and '-' (it becomes the URL)")
+            raise BuildError(f"{show(folder)}: folder name must be lowercase a-z, 0-9 and '-' (it becomes the URL)")
         pieces.append(load_piece(folder))
     pieces.sort(key=lambda p: slugify(p.title))
 

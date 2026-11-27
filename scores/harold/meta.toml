@@ -4,9 +4,18 @@ composer = "Felix Mendelssohn Bartholdy"
 qr = { x = 20, y = 274 }        # this PDF already has the QR code from the template; remove after re-exporting without it
 
 [[arrangement]]
-# name = "SATB"    # shown as a heading; useful once there are several arrangements
+name = "SATB Deutsch"    # shown as a heading; useful once there are several arrangements
 
   [[arrangement.version]]
   date = 2026-11-23
   pdf = "Hark The herald angels sing.pdf"
   dorico = "Hark The herald angels sing.dorico"
+
+[[arrangement]]
+name = "SATB English"
+id = "english"
+
+  [[arrangement.version]]
+  date = 2026-11-23
+  pdf = "Hark The herald angels sing English.pdf"
+  dorico = "Hark The herald angels sing English.dorico"

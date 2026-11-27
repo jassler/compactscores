@@ -11,3 +11,6 @@ name = "SATB+Cello"    # shown as a heading; useful once there are several arran
   pdf = "Maria durch ein Dornwald ging.pdf"
   dorico = "Maria durch ein Dornwald ging.dorico"
   notes = "Two arrangements in one file, plz check if correct"
+
+  [[arrangement.recording]]
+  url = "https://youtu.be/76oDN6wNlHY"
